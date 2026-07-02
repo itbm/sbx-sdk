@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://schema.buildwithfern.dev/generators-yml.json
+api:
+  specs:
+    - openapi: ../openapi.yaml
+default-group: local
+groups:
+  local:
+    generators:
+      - name: fern-typescript-sdk
+        output:
+          location: local-file-system
+          path: ../sdks/typescript
+        version: 3.75.0
+        config:
+          # package-name: sbx-sdk
+          namespaceExport: Sbx
+
+      - name: fern-python-sdk
+        output:
+          location: local-file-system
+          path: ../sdks/python
+        version: 4.4.0
+        config:
+          package_name: sbx_sdk
+          client_class_name: Sbx
+
+      - name: fern-go-sdk
+        output:
+          location: local-file-system
+          path: ../sdks/go
+        version: 0.34.0
+        config:
+          module:
+            path: github.com/itbm/sbx-sdk
+
+      - name: fern-php-sdk
+        output:
+          location: local-file-system
+          path: ../sdks/php
+        version: 2.10.15
+        config:
+          packageName: itbm/sbx-sdk
+          namespace: Sbx
+          clientName: Sbx

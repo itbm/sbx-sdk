@@ -1,0 +1,1344 @@
+openapi: 3.0.3
+
+info:
+  title: sbx Daemon HTTP API
+  description: |
+    Reverse-engineered API for the Docker Sandboxes daemon (`sandboxd`) v0.34.0.
+
+    ## Transport
+
+    All requests are made over a **Unix domain socket**, not TCP. The host in the URL
+    is ignored — what matters is the socket path:
+
+    | Socket | Path | Purpose |
+    |--------|------|---------|
+    | `sandboxd.sock` | `~/.local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock` | Primary sbx REST API (this spec) |
+    | `docker.sock` | `~/.local/state/sandboxes/sandboxes/sandboxd/docker.sock` | Docker-compatible API (separate) |
+
+    **curl example:**
+    ```bash
+    SOCK="$HOME/.local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock"
+    curl --unix-socket "$SOCK" http://localhost/daemon/health
+    curl --unix-socket "$SOCK" -H "Authorization: Bearer $TOKEN" http://localhost/sandbox
+    ```
+
+    SDK clients must use a custom HTTP transport that connects via unix socket rather than TCP.
+
+    ## Authentication
+
+    All endpoints require `Authorization: Bearer <token>` **except**:
+    - `GET /daemon/health`
+    - `GET /daemon/info`
+
+    The token is the Docker OAuth access token stored by `sbx login`. It is a short-lived JWT
+    (15-minute TTL) that is automatically refreshed from the stored refresh token.
+
+    ## Error format
+
+    All errors return JSON with an HTTP error status:
+    ```json
+    { "message": "human-readable description" }
+    ```
+  version: 0.16.0
+
+servers:
+  - url: http://localhost
+    description: |
+      Unix socket transport. Connect via:
+      `~/.local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock`
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: daemon
+    description: Daemon health, info, and diagnostics
+  - name: sandboxes
+    description: Sandbox lifecycle management
+  - name: exec
+    description: Command execution inside sandboxes
+  - name: ports
+    description: Port publishing and mapping
+  - name: files
+    description: File transfer (not yet implemented)
+  - name: policy
+    description: Network and filesystem policy rules
+  - name: images
+    description: Template image management
+  - name: runtimes
+    description: Runtime session management
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Docker OAuth access token obtained via `sbx login`
+
+  schemas:
+
+    # ── Common ────────────────────────────────────────────────────────────────
+
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          example: workspace is required
+
+    # ── Daemon ────────────────────────────────────────────────────────────────
+
+    DaemonHealth:
+      type: object
+      required: [api_version, release, revision, status, version]
+      properties:
+        api_version:
+          type: string
+          example: "0.16.0"
+        release:
+          type: boolean
+          example: false
+        revision:
+          type: string
+          example: "2eae0c4fc3894475da3318615f69783b0e7be747"
+        status:
+          type: string
+          example: "healthy"
+        version:
+          type: string
+          example: "v0.34.0"
+
+    DaemonInfo:
+      type: object
+      required: [api_socket, docker_socket]
+      properties:
+        api_socket:
+          type: string
+          description: Absolute path to the sandboxd unix socket
+          example: "/home/user/.local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock"
+        docker_socket:
+          type: string
+          description: Absolute path to the docker-compatible unix socket
+          example: "/home/user/.local/state/sandboxes/sandboxes/sandboxd/docker.sock"
+
+    LogLevel:
+      type: string
+      enum: [trace, debug, info]
+
+    LogLevels:
+      type: object
+      properties:
+        general:
+          $ref: '#/components/schemas/LogLevel'
+        proxy:
+          $ref: '#/components/schemas/LogLevel'
+
+    SetLogLevelRequest:
+      type: object
+      required: [level]
+      properties:
+        level:
+          $ref: '#/components/schemas/LogLevel'
+
+    VersionCheckResponse:
+      type: object
+      properties:
+        result:
+          type: string
+          example: incompatible
+
+    # ── Sandboxes ─────────────────────────────────────────────────────────────
+
+    SandboxWorkspace:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Absolute path to the workspace directory
+          example: /home/user/myproject
+        read_only:
+          type: boolean
+          default: false
+
+    Sandbox:
+      type: object
+      required: [id, name, agent, status]
+      properties:
+        id:
+          type: string
+          example: abc123
+        name:
+          type: string
+          example: claude-myproject
+        agent:
+          type: string
+          example: claude
+        status:
+          type: string
+          enum: [running, stopped, starting, stopping]
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/SandboxWorkspace'
+
+    SandboxCreateRequest:
+      type: object
+      required: [agent, workspace]
+      properties:
+        agent:
+          type: string
+          description: >
+            Agent identifier. Known values: claude, codex, copilot, cursor, gemini,
+            kiro, opencode, shell. Additional values may be accepted.
+          example: claude
+        workspace:
+          type: string
+          description: Primary workspace path (absolute). Required.
+          example: /home/user/myproject
+        workspaces:
+          type: array
+          description: Additional workspace mounts
+          items:
+            $ref: '#/components/schemas/SandboxWorkspace'
+        name:
+          type: string
+          description: >
+            Sandbox name. Auto-generated from agent name and workspace directory
+            basename if omitted.
+          example: my-sandbox
+        template:
+          type: string
+          description: Template image tag to use instead of the default agent image
+          example: myimage:v1.0
+        clone:
+          type: boolean
+          description: >
+            Clone the workspace git repository into the sandbox instead of
+            bind-mounting it. The workspace path must be a git repository.
+          default: false
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Environment variables injected into the sandbox at startup
+          example:
+            NODE_ENV: development
+            DEBUG: "1"
+        ports:
+          type: array
+          items:
+            type: string
+          description: Port specs to publish immediately on creation
+          example: ["8080", "3000:3000/tcp"]
+        kit_refs:
+          type: array
+          items:
+            type: string
+          description: Kit artifact OCI references to inject into the sandbox
+          example: ["ghcr.io/org/mykit:v1"]
+        network_policy:
+          type: string
+          enum: [allow-all, balanced, deny-all]
+          description: Network policy profile. Defaults to the global policy.
+        allow_mcp_servers:
+          type: boolean
+          description: Allow MCP server connections from inside the sandbox
+        allow_package_managers:
+          type: boolean
+          description: Allow package manager network access (npm, pip, etc.)
+        args:
+          type: array
+          items:
+            type: string
+          description: Extra arguments passed to the runtime (nerdbox)
+        agent_args:
+          type: array
+          items:
+            type: string
+          description: Arguments forwarded to the agent process inside the sandbox
+
+    # ── Exec ──────────────────────────────────────────────────────────────────
+
+    ExecRequest:
+      type: object
+      required: [cmd]
+      properties:
+        cmd:
+          type: array
+          items:
+            type: string
+          description: Command and arguments as an array
+          example: ["bash", "-c", "npm test"]
+        tty:
+          type: boolean
+          description: Allocate a pseudo-TTY
+          default: false
+        interactive:
+          type: boolean
+          description: Keep stdin open
+          default: false
+        user:
+          type: string
+          description: 'User or UID[:GID] to run as inside the sandbox'
+          example: root
+        workdir:
+          type: string
+          description: Working directory inside the sandbox
+          example: /home/user/project
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional environment variables for this exec only
+        detach:
+          type: boolean
+          description: Run in background and return immediately without streaming output
+          default: false
+
+    # ── Ports ─────────────────────────────────────────────────────────────────
+
+    PortProtocol:
+      type: string
+      enum: [tcp, tcp4, tcp6, udp, udp4, udp6]
+      default: tcp
+
+    PortMapping:
+      type: object
+      required: [sandbox_port]
+      properties:
+        sandbox_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: Port number inside the sandbox
+        host_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: >
+            Port on the host to map to. If omitted on create, an ephemeral
+            port is assigned and returned in the response.
+        host_ip:
+          type: string
+          description: Host IP address to bind. Defaults to loopback (127.0.0.1).
+          example: "0.0.0.0"
+        protocol:
+          $ref: '#/components/schemas/PortProtocol'
+
+    PortMappingList:
+      type: array
+      items:
+        $ref: '#/components/schemas/PortMapping'
+
+    # ── Policy ────────────────────────────────────────────────────────────────
+
+    PolicySetup:
+      type: object
+      required: [initialized]
+      properties:
+        initialized:
+          type: boolean
+        profile:
+          type: string
+          enum: [allow-all, balanced, deny-all]
+          description: Active policy profile. Present only when initialized is true.
+
+    PolicyRule:
+      type: object
+      properties:
+        id:
+          type: string
+          example: default-ai-services
+        name:
+          type: string
+          example: default-ai-services
+        policy_id:
+          type: string
+          example: local-policy
+        scope:
+          type: string
+          enum: [global, sandbox]
+        applies_to:
+          type: string
+          description: Which sandboxes this rule applies to
+          example: all
+        resource_type:
+          type: string
+          enum: [network, filesystem]
+        decision:
+          type: string
+          enum: [allow, deny]
+        resources:
+          type: array
+          items:
+            type: string
+          description: >
+            Network resources as `host:port` or `**.host` glob.
+            Filesystem resources as glob paths.
+          example: ["api.anthropic.com:443", "**.openai.com:443"]
+        origin:
+          type: string
+          example: local
+        status:
+          type: string
+          example: active
+        editable:
+          type: boolean
+
+    PolicyRulesListResponse:
+      type: object
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRule'
+
+    PolicyRuleAction:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [allow, deny, remove-resource, remove-id]
+          description: |
+            - `allow` — add an allow rule (requires resource_type, resources)
+            - `deny` — add a deny rule (requires resource_type, resources)
+            - `remove-resource` — remove rules matching the given resources (requires resource_type, resources)
+            - `remove-id` — remove a rule by its UUID (requires id)
+        resource_type:
+          type: string
+          enum: [network, filesystem]
+        resources:
+          type: array
+          items:
+            type: string
+          description: >
+            For network: `"example.com:443"` or `"**.example.com"` glob.
+            For filesystem: glob paths.
+          example: ["example.com:443"]
+        id:
+          type: string
+          description: Rule UUID. Required only for action `remove-id`.
+        scope:
+          type: string
+          enum: [global, sandbox]
+          description: >
+            `global` applies to all sandboxes; `sandbox` applies to one sandbox
+            (set sandbox_name). Defaults to global.
+          default: global
+        sandbox_name:
+          type: string
+          description: Sandbox name. Required when scope is `sandbox`.
+
+    PolicyRulesRequest:
+      type: object
+      required: [actions]
+      properties:
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRuleAction'
+          minItems: 1
+
+    PolicyRuleCreated:
+      type: object
+      properties:
+        rule_id:
+          type: string
+          example: c85bd8b4-7a46-4dfa-a998-adf61aa87228
+        resource:
+          type: string
+          example: example.com:443
+
+    PolicyRuleActionResult:
+      type: object
+      properties:
+        action:
+          type: string
+        resources:
+          type: array
+          items:
+            type: string
+        created:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRuleCreated'
+          description: Present on success for allow/deny actions
+        error:
+          type: string
+          description: Present instead of `created` when the action failed
+
+    PolicyRulesResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyRuleActionResult'
+          description: One result per action, in the same order as the request
+
+    PolicyProfilesResponse:
+      type: object
+      required: [profiles]
+      properties:
+        profiles:
+          type: array
+          items:
+            type: object
+
+    # ── Docker images ─────────────────────────────────────────────────────────
+
+    DockerImage:
+      type: object
+      properties:
+        agent:
+          type: string
+          example: claude-code-docker
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-06-30T19:29:52Z"
+        id:
+          type: string
+          example: "sha256:9a3bab17aae9c4a9e59fa5e3de4e4b8da1e17c7a..."
+
+    # ── Runtimes ──────────────────────────────────────────────────────────────
+
+    RuntimeSession:
+      type: object
+      description: Active runtime session for a sandbox (exact shape not fully determined)
+      additionalProperties: true
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Paths
+# ═══════════════════════════════════════════════════════════════════════════════
+
+paths:
+
+  # ── Daemon ──────────────────────────────────────────────────────────────────
+
+  /daemon/health:
+    get:
+      operationId: getDaemonHealth
+      summary: Get daemon health and version
+      description: No authentication required.
+      tags: [daemon]
+      security: []
+      responses:
+        '200':
+          description: Daemon is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonHealth'
+
+  /daemon/info:
+    get:
+      operationId: getDaemonInfo
+      summary: Get daemon socket paths
+      description: Returns the absolute paths of both unix sockets. No authentication required.
+      tags: [daemon]
+      security: []
+      responses:
+        '200':
+          description: Socket paths
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonInfo'
+
+  /daemon/diagnostics:
+    get:
+      operationId: getDaemonDiagnostics
+      summary: Get diagnostics bundle
+      description: Returns a large JSON diagnostic bundle. Used by `sbx diagnose`.
+      tags: [daemon]
+      responses:
+        '200':
+          description: Diagnostics bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /daemon/loglevel:
+    get:
+      operationId: getDaemonLogLevel
+      summary: Get current log levels
+      tags: [daemon]
+      responses:
+        '200':
+          description: Current log levels per category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogLevels'
+
+  /daemon/loglevel/{category}:
+    post:
+      operationId: setDaemonLogLevel
+      summary: Set log level for a category
+      tags: [daemon]
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [general, proxy]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetLogLevelRequest'
+      responses:
+        '204':
+          description: Log level updated
+        '400':
+          description: Invalid level or category
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /version:
+    post:
+      operationId: checkVersion
+      summary: CLI/daemon compatibility check
+      description: >
+        Called by the CLI on every command to verify compatibility with the running daemon.
+        The request body is empty; the response indicates whether the versions are compatible.
+      tags: [daemon]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Version check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionCheckResponse'
+
+  # ── Sandboxes ───────────────────────────────────────────────────────────────
+
+  /sandbox:
+    get:
+      operationId: listSandboxes
+      summary: List all sandboxes
+      description: Maps to `sbx ls`. Returns an empty array when no sandboxes exist.
+      tags: [sandboxes]
+      responses:
+        '200':
+          description: List of sandboxes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Sandbox'
+        '401':
+          description: Missing or invalid authorization token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      operationId: createSandbox
+      summary: Create a sandbox
+      description: |
+        Maps to `sbx create` and `sbx run`.
+
+        The global network policy must have been initialized before calling this endpoint
+        (see `GET /policy/setup`). If not initialized, returns `412 Precondition Failed`.
+
+        Returns `500` if KVM is unavailable on the host.
+      tags: [sandboxes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SandboxCreateRequest'
+            example:
+              agent: claude
+              workspace: /home/user/myproject
+              workspaces:
+                - path: /home/user/docs
+                  read_only: true
+              name: my-sandbox
+              env:
+                NODE_ENV: development
+              network_policy: balanced
+      responses:
+        '200':
+          description: Created sandbox
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sandbox'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: Global network policy not initialized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: KVM unavailable or other internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sandbox/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Sandbox name
+
+    get:
+      operationId: getSandbox
+      summary: Get a sandbox by name
+      tags: [sandboxes]
+      responses:
+        '200':
+          description: Sandbox details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sandbox'
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      operationId: deleteSandbox
+      summary: Remove a sandbox
+      description: Stops and removes a sandbox and all associated resources. Maps to `sbx rm`.
+      tags: [sandboxes]
+      responses:
+        '204':
+          description: Sandbox removed
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sandbox/{name}/stop:
+    post:
+      operationId: stopSandbox
+      summary: Stop a running sandbox
+      description: Stops the sandbox without removing it. Maps to `sbx stop`.
+      tags: [sandboxes]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Sandbox stopped
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sandbox/{name}/start:
+    post:
+      operationId: startSandbox
+      summary: Start a stopped sandbox
+      description: Starts a previously stopped sandbox. Used when `sbx run --name` targets a stopped sandbox.
+      tags: [sandboxes]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Sandbox started
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sandbox/{name}/save:
+    post:
+      operationId: saveSandbox
+      summary: Save sandbox as template image
+      description: |
+        Intended for `sbx template save`.
+        **Currently returns `501 Not Implemented`.**
+      tags: [sandboxes]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Saved template
+        '501':
+          description: Not yet implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ── Exec ────────────────────────────────────────────────────────────────────
+
+  /sandbox/{name}/exec:
+    post:
+      operationId: execInSandbox
+      summary: Execute a command in a sandbox
+      description: |
+        Maps to `sbx exec`. For interactive or TTY sessions the HTTP connection
+        is **hijacked** after the initial 200 response (identical to Docker exec attach).
+        The connection is then raw stdin/stdout/stderr streams — not HTTP.
+
+        Non-interactive exec returns combined stdout/stderr in the response body.
+
+        SDK clients must handle the connection-hijack case separately; it cannot be
+        generated automatically.
+      tags: [exec]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecRequest'
+            example:
+              cmd: ["bash", "-c", "npm test"]
+              workdir: /home/user/project
+              tty: true
+              interactive: true
+      responses:
+        '200':
+          description: >
+            Non-interactive: stdout/stderr in response body.
+            Interactive: connection hijacked for raw stream (not standard HTTP response).
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ── Ports ───────────────────────────────────────────────────────────────────
+
+  /sandbox/{name}/ports:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      operationId: listSandboxPorts
+      summary: List published ports
+      description: Maps to `sbx ports <sandbox>`.
+      tags: [ports]
+      responses:
+        '200':
+          description: Published port mappings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortMappingList'
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      operationId: publishSandboxPorts
+      summary: Publish ports
+      description: Maps to `sbx ports <sandbox> --publish`.
+      tags: [ports]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortMappingList'
+            example:
+              - sandbox_port: 8080
+                host_port: 3000
+                protocol: tcp
+              - sandbox_port: 5432
+      responses:
+        '200':
+          description: Resolved port mappings with allocated host ports
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortMappingList'
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sandbox/{name}/ports/unpublish:
+    post:
+      operationId: unpublishSandboxPorts
+      summary: Unpublish ports
+      description: Maps to `sbx ports <sandbox> --unpublish`.
+      tags: [ports]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortMappingList'
+            example:
+              - sandbox_port: 8080
+                host_port: 3000
+                protocol: tcp
+      responses:
+        '204':
+          description: Ports unpublished
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ── Logs ────────────────────────────────────────────────────────────────────
+
+  /sandbox/{name}/logs:
+    get:
+      operationId: getSandboxLogs
+      summary: Stream sandbox logs
+      description: Returns a log stream as newline-delimited text.
+      tags: [sandboxes]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Log stream (newline-delimited)
+          content:
+            text/plain:
+              schema:
+                type: string
+        '404':
+          description: Sandbox not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ── Files (not yet implemented) ─────────────────────────────────────────────
+
+  /sandbox/{name}/files:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Absolute path inside the sandbox
+        example: /home/user/output.json
+
+    get:
+      operationId: downloadSandboxFile
+      summary: Download a file from a sandbox
+      description: |
+        Intended for `sbx cp <sandbox>:<path> <local>`.
+        **Currently returns `501 Not Implemented`.**
+
+        When implemented, will use the Docker archive API on `docker.sock`.
+      tags: [files]
+      responses:
+        '200':
+          description: File contents (tar archive)
+          content:
+            application/x-tar:
+              schema:
+                type: string
+                format: binary
+        '501':
+          description: Not yet implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      operationId: uploadSandboxFile
+      summary: Upload a file to a sandbox
+      description: |
+        Intended for `sbx cp <local> <sandbox>:<path>`.
+        **Currently returns `501 Not Implemented`.**
+      tags: [files]
+      requestBody:
+        required: true
+        content:
+          application/x-tar:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: File uploaded
+        '501':
+          description: Not yet implemented
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ── Runtimes ────────────────────────────────────────────────────────────────
+
+  /runtime/{name}/session:
+    get:
+      operationId: getRuntimeSession
+      summary: Get active runtime session
+      description: |
+        Returns the active runtime session for a running sandbox.
+        Called by `sbx kit add` to verify the sandbox is running before injecting a kit.
+
+        Returns `404 "runtime not found"` when the sandbox exists but is stopped.
+      tags: [runtimes]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Sandbox name
+      responses:
+        '200':
+          description: Active runtime session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeSession'
+        '404':
+          description: Runtime not found (sandbox stopped or does not exist)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /runtime:
+    post:
+      operationId: startRuntime
+      summary: Start a runtime session
+      description: |
+        Believed to start a runtime session for a stopped sandbox, called when
+        re-attaching via `sbx run --name`.
+
+        **The exact request body schema is not fully determined.** The daemon requires
+        a sandbox name field but all tested field names return `400 "sandbox name cannot be empty"`.
+        This endpoint is documented as-is and should be considered incomplete.
+      tags: [runtimes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: >
+                Body schema not fully determined. Must include a sandbox name field.
+      responses:
+        '200':
+          description: Runtime session started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeSession'
+        '400':
+          description: Missing or invalid sandbox name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ── Policy ──────────────────────────────────────────────────────────────────
+
+  /policy/setup:
+    get:
+      operationId: getPolicySetup
+      summary: Check policy initialization status
+      description: |
+        Returns whether the global network policy has been initialized and which profile is active.
+        Called before sandbox creation to verify readiness.
+
+        If not initialized, `POST /sandbox` returns `412`. Initialize with:
+        `sbx policy init <allow-all|balanced|deny-all>`
+      tags: [policy]
+      responses:
+        '200':
+          description: Policy setup status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicySetup'
+
+  /policy/rules:
+    get:
+      operationId: listPolicyRules
+      summary: List policy rules
+      description: Maps to `sbx policy ls`.
+      tags: [policy]
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [all, network, filesystem]
+            default: all
+          description: Filter by resource type
+        - name: sandbox
+          in: query
+          schema:
+            type: string
+          description: Filter to rules scoped to a specific sandbox
+      responses:
+        '200':
+          description: Policy rules
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyRulesListResponse'
+
+    post:
+      operationId: mutatePolicyRules
+      summary: Add or remove policy rules
+      description: |
+        A single endpoint handles all policy rule mutations via an `actions` array.
+        Maps to `sbx policy allow`, `sbx policy deny`, and `sbx policy rm`.
+
+        Actions are applied in order. Each action in the `results` array corresponds
+        to the action at the same index in `actions`. A failed action has an `error`
+        field instead of `created`.
+      tags: [policy]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyRulesRequest'
+            examples:
+              allowDomain:
+                summary: Allow a network domain
+                value:
+                  actions:
+                    - action: allow
+                      resource_type: network
+                      resources: ["example.com:443"]
+                      scope: global
+              denyAndAllow:
+                summary: Deny globally, allow for one sandbox
+                value:
+                  actions:
+                    - action: deny
+                      resource_type: network
+                      resources: ["social-media.example.com:443"]
+                      scope: global
+                    - action: allow
+                      resource_type: network
+                      resources: ["social-media.example.com:443"]
+                      scope: sandbox
+                      sandbox_name: my-sandbox
+              removeById:
+                summary: Remove a rule by its UUID
+                value:
+                  actions:
+                    - action: remove-id
+                      id: c85bd8b4-7a46-4dfa-a998-adf61aa87228
+      responses:
+        '200':
+          description: Action results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyRulesResponse'
+        '400':
+          description: Invalid actions array
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /policy/profiles:
+    get:
+      operationId: listPolicyProfiles
+      summary: List governance policy profiles
+      description: Maps to `sbx policy profile ls`. Returns an empty list on a default installation.
+      tags: [policy]
+      responses:
+        '200':
+          description: Policy profiles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyProfilesResponse'
+
+  /network/log:
+    get:
+      operationId: getNetworkLog
+      summary: Get network access log
+      description: Returns the sandbox network access log. Maps to `sbx policy log`.
+      tags: [policy]
+      responses:
+        '200':
+          description: Network access log
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  # ── Docker image management ─────────────────────────────────────────────────
+
+  /docker/images:
+    get:
+      operationId: listTemplateImages
+      summary: List template images
+      description: Lists template images available in the local cache. Maps to `sbx template ls`.
+      tags: [images]
+      responses:
+        '200':
+          description: Template images
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DockerImage'
+
+  /docker/images/create:
+    post:
+      operationId: pullTemplateImage
+      summary: Pull a template image
+      description: |
+        Pulls a template image from the registry into the local cache.
+        Called automatically during `sbx create` / `sbx run`.
+
+        Response is a newline-delimited JSON stream of pull progress events
+        (same format as `docker pull`).
+      tags: [images]
+      parameters:
+        - name: fromImage
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Image repository
+          example: docker/sandbox-templates
+        - name: tag
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Image tag
+          example: claude-code-docker
+      responses:
+        '200':
+          description: Streaming pull progress (newline-delimited JSON)
+          content:
+            application/json:
+              schema:
+                type: string
+                description: Newline-delimited JSON progress events
+
+  /docker/images/load:
+    post:
+      operationId: loadTemplateImage
+      summary: Load a template image from a tar file
+      description: Loads a template image from a local tar archive. Maps to `sbx template load <file>`.
+      tags: [images]
+      requestBody:
+        required: true
+        content:
+          application/x-tar:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Image loaded successfully
+
+  /docker/images/remove:
+    delete:
+      operationId: removeTemplateImage
+      summary: Remove a template image
+      description: Removes a template image from the local cache. Maps to `sbx template rm`.
+      tags: [images]
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Image tag or digest to remove
+          example: myimage:v1.0
+      responses:
+        '204':
+          description: Image removed
+        '404':
+          description: Image not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
