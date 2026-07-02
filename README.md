@@ -36,13 +36,95 @@ Fern produces idiomatic clients for four languages, configured in [`fern/generat
 |----------|--------|------------------|
 | TypeScript | `sdks/typescript` | namespace `Sbx` |
 | Python | `sdks/python` | `sbx_sdk` (client `Sbx`) |
-| Go | `sdks/go` | `github.com/itbm/sbx-sdk` |
+| Go | `sdks/go` | `github.com/itbm/sbx-sdk/sdks/go` |
 | PHP | `sdks/php` | `itbm/sbx-sdk` (namespace `Sbx`) |
 
-> **Transport note:** the `sbx` API is served over a **Unix domain socket**, not TCP — the host in each URL is ignored. Generated clients point at `http://localhost` and require a custom HTTP transport that dials the socket at
-> `~/.local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock`.
+> **Transport note:** the `sbx` API is served over a **Unix domain socket**, not TCP — the host in each URL is ignored. Generated clients point at `http://localhost` and require a custom HTTP transport that dials the socket. Each language has a hand-written wrapper (`sbx.ts` / `sbx.go` / `sbx.py` / `SbxClientFactory.php`) that discovers the socket via `sbx daemon status` and wires this up automatically — see [Installation](#installation) below.
+
+## Installation
+
+Each [GitHub Release](https://github.com/itbm/sbx-sdk/releases) publishes a source tarball per language (built by [`.github/workflows/release.yml`](./.github/workflows/release.yml)), installable directly from the release URL — no registry needed. Replace `X.Y.Z` / `vX.Y.Z` below with an actual [released version](https://github.com/itbm/sbx-sdk/releases); each install pins to that exact URL, so upgrading means bumping the version yourself rather than a semver-range `update`.
+
+### TypeScript
+
+```bash
+npm install https://github.com/itbm/sbx-sdk/releases/download/vX.Y.Z/sbx-sdk-typescript-X.Y.Z.tgz
+```
+
+```ts
+import { createSbxClient } from "sbx-sdk/sbx";
+
+const client = await createSbxClient();
+const health = await client.daemon.getDaemonHealth();
+```
+
+### Python
+
+```bash
+pip install https://github.com/itbm/sbx-sdk/releases/download/vX.Y.Z/sbx-sdk-python-X.Y.Z.tar.gz
+```
+
+```python
+from sbx_sdk.sbx import create_sbx_client
+
+client = create_sbx_client()
+health = client.daemon.get_daemon_health()
+```
+
+### Go
+
+Go modules resolve straight from this repo's `sdks/go` subdirectory via its own nested tag — no tarball needed:
+
+```bash
+go get github.com/itbm/sbx-sdk/sdks/go@vX.Y.Z
+```
+
+```go
+import sbx "github.com/itbm/sbx-sdk/sdks/go/sbx"
+
+client, err := sbx.NewClient(ctx, "")
+health, err := client.Daemon.GetDaemonHealth(ctx)
+```
+
+### PHP
+
+Composer doesn't resolve arbitrary tarball URLs through `require` alone — point it at the release asset with a [`package` repository](https://getcomposer.org/doc/05-repositories.md#package-2):
+
+```json
+{
+  "repositories": [
+    {
+      "type": "package",
+      "package": {
+        "name": "itbm/sbx-sdk",
+        "version": "X.Y.Z",
+        "dist": {
+          "url": "https://github.com/itbm/sbx-sdk/releases/download/vX.Y.Z/sbx-sdk-php-X.Y.Z.tar.gz",
+          "type": "tar"
+        }
+      }
+    }
+  ],
+  "require": {
+    "itbm/sbx-sdk": "X.Y.Z"
+  }
+}
+```
+
+```bash
+composer install
+```
+
+```php
+use Sbx\SbxClientFactory;
+
+$client = SbxClientFactory::create();
+$health = $client->daemon->getDaemonHealth();
+```
 
 ## Generating the SDKs
+
+Releases (tarballs + tags, including the Go nested-module tag) are built automatically by [`.github/workflows/release.yml`](./.github/workflows/release.yml) on every `vX.Y.Z` tag push. The steps below are for local/manual generation.
 
 **Prerequisites**
 

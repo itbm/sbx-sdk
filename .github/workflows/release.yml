@@ -1,0 +1,103 @@
+name: Release SDKs
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to release (e.g. v0.34.0)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: curl, json
+
+      # fern generate --local runs each generator in Docker; ubuntu-latest
+      # runners have Docker pre-installed and running.
+      - name: Generate SDKs from the OpenAPI spec
+        run: |
+          npm install
+          npm run build
+
+      - name: Verify Go module builds
+        working-directory: sdks/go
+        run: go build ./...
+
+      - name: Build TypeScript tarball
+        working-directory: sdks/typescript
+        run: |
+          npm version "${{ steps.version.outputs.version }}" --no-git-tag-version --allow-same-version
+          npm install
+          npm run build
+          npm pack
+          mkdir -p "$GITHUB_WORKSPACE/dist-artifacts"
+          mv *.tgz "$GITHUB_WORKSPACE/dist-artifacts/sbx-sdk-typescript-${{ steps.version.outputs.version }}.tgz"
+
+      - name: Build Python sdist
+        working-directory: sdks/python
+        run: |
+          sed -i "s/^version = .*/version = \"${{ steps.version.outputs.version }}\"/" pyproject.toml
+          pip install build
+          python -m build --sdist
+          mkdir -p "$GITHUB_WORKSPACE/dist-artifacts"
+          cp dist/*.tar.gz "$GITHUB_WORKSPACE/dist-artifacts/sbx-sdk-python-${{ steps.version.outputs.version }}.tar.gz"
+
+      - name: Build PHP tarball
+        working-directory: sdks/php
+        run: |
+          jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' composer.json > composer.json.tmp
+          mv composer.json.tmp composer.json
+          composer install --no-interaction
+          mkdir -p "$GITHUB_WORKSPACE/dist-artifacts"
+          tar -czf "$GITHUB_WORKSPACE/dist-artifacts/sbx-sdk-php-${{ steps.version.outputs.version }}.tar.gz" composer.json src/
+
+      # Go modules in a subdirectory resolve via a nested tag
+      # (sdks/go/vX.Y.Z), not the plain release tag — see
+      # https://go.dev/ref/mod#vcs-version. `go get` needs this pushed
+      # for github.com/itbm/sbx-sdk/sdks/go@vX.Y.Z to work.
+      - name: Tag the Go module for its subdirectory
+        run: |
+          git tag "sdks/go/${{ steps.version.outputs.tag }}"
+          git push origin "sdks/go/${{ steps.version.outputs.tag }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: dist-artifacts/*
+          generate_release_notes: true
