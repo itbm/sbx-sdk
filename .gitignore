@@ -1,0 +1,35 @@
+# Generated SDK output — build artifacts produced by `make generate`.
+# Everything under sdks/ is ignored EXCEPT the hand-written overlay files and
+# each SDK's .fernignore (which tells Fern not to overwrite those files).
+sdks/*
+
+!sdks/typescript/
+sdks/typescript/*
+!sdks/typescript/sbx.ts
+!sdks/typescript/.fernignore
+!sdks/typescript/package.json
+!sdks/typescript/tsconfig.json
+
+!sdks/go/
+sdks/go/*
+!sdks/go/.fernignore
+!sdks/go/sbx/
+
+!sdks/python/
+sdks/python/*
+!sdks/python/pyproject.toml
+!sdks/python/sbx_sdk/
+sdks/python/sbx_sdk/*
+!sdks/python/sbx_sdk/.fernignore
+!sdks/python/sbx_sdk/sbx.py
+
+!sdks/php/
+sdks/php/*
+!sdks/php/.fernignore
+!sdks/php/composer.json
+!sdks/php/src/
+sdks/php/src/*
+!sdks/php/src/SbxClientFactory.php
+
+# Node tooling
+node_modules/

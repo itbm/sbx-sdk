@@ -1,0 +1,32 @@
+{
+  "name": "sbx-sdk",
+  "version": "0.34.0",
+  "description": "TypeScript client for the sbx daemon HTTP API",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./sbx": {
+      "types": "./dist/sbx.d.ts",
+      "default": "./dist/sbx.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "undici": "^8.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

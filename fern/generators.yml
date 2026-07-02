@@ -18,7 +18,7 @@ groups:
       - name: fern-python-sdk
         output:
           location: local-file-system
-          path: ../sdks/python
+          path: ../sdks/python/sbx_sdk
         version: 4.4.0
         config:
           package_name: sbx_sdk
@@ -31,7 +31,7 @@ groups:
         version: 0.34.0
         config:
           module:
-            path: github.com/itbm/sbx-sdk
+            path: github.com/itbm/sbx-sdk/sdks/go
 
       - name: fern-php-sdk
         output:

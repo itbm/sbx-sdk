@@ -1,0 +1,6 @@
+.fernignore
+sbx.ts
+package.json
+tsconfig.json
+dist
+node_modules

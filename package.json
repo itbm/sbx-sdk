@@ -1,0 +1,14 @@
+{
+  "name": "sbx-sdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SDK generation for the reverse-engineered sbx daemon HTTP API",
+  "scripts": {
+    "build": "make generate",
+    "clean": "make clean"
+  },
+  "devDependencies": {
+    "fern-api": "^5.64.0",
+    "undici": "^8.6.0"
+  }
+}
