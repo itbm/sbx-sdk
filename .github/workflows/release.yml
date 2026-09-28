@@ -70,7 +70,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: sdks/go/go.mod
+          # Not go-version-file: the generated go.mod declares an older Go than
+          # the generated code needs (io.ReadAll, reflect.Pointer).
+          go-version: stable
 
       - name: Verify Go module builds
         working-directory: sdks/go
