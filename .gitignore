@@ -9,6 +9,7 @@ sdks/typescript/*
 !sdks/typescript/.fernignore
 !sdks/typescript/package.json
 !sdks/typescript/tsconfig.json
+!sdks/typescript/test-wrapper/
 
 !sdks/go/
 sdks/go/*
@@ -18,6 +19,7 @@ sdks/go/*
 !sdks/python/
 sdks/python/*
 !sdks/python/pyproject.toml
+!sdks/python/tests/
 !sdks/python/sbx_sdk/
 sdks/python/sbx_sdk/*
 !sdks/python/sbx_sdk/.fernignore
@@ -27,9 +29,17 @@ sdks/python/sbx_sdk/*
 sdks/php/*
 !sdks/php/.fernignore
 !sdks/php/composer.json
+!sdks/php/tests/
+sdks/php/tests/*
+!sdks/php/tests/SbxClientFactoryTest.php
 !sdks/php/src/
 sdks/php/src/*
 !sdks/php/src/SbxClientFactory.php
 
 # Node tooling
 node_modules/
+
+# Python tooling
+__pycache__/
+*.egg-info/
+.pytest_cache/

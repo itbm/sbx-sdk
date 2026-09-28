@@ -1,13 +1,13 @@
 {
   "name": "itbm/sbx-sdk",
   "version": "0.34.0",
-  "description": "Sbx PHP Library",
+  "description": "PHP client for the sbx daemon HTTP API",
   "keywords": [
     "itbm",
     "api",
     "sdk"
   ],
-  "license": [],
+  "license": "Apache-2.0",
   "require": {
     "php": "^8.1",
     "ext-json": "*",
@@ -38,10 +38,10 @@
   },
   "scripts": {
     "build": [
-      "@php -l src",
-      "@php -l tests"
+      "@php -l src/SbxClientFactory.php"
     ],
-    "test": "phpunit",
+    "test": "phpunit tests/SbxClientFactoryTest.php",
     "analyze": "phpstan analyze src tests --memory-limit=1G"
-  }
+  },
+  "homepage": "https://github.com/itbm/sbx-sdk"
 }
