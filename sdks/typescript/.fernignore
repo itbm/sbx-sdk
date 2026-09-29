@@ -2,5 +2,6 @@
 sbx.ts
 package.json
 tsconfig.json
+test-wrapper
 dist
 node_modules

@@ -7,62 +7,48 @@ package sbx
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
-	"os/exec"
-	"regexp"
+	"time"
 
 	client "github.com/itbm/sbx-sdk/sdks/go/client"
 	option "github.com/itbm/sbx-sdk/sdks/go/option"
 )
 
-var socketStatusPattern = regexp.MustCompile(`(?m)^Socket:\s*(\S+)`)
-
-// DiscoverSocketPath parses the socket path out of `sbx daemon status`,
-// which prints it whether or not the daemon is running.
-func DiscoverSocketPath(ctx context.Context) (string, error) {
-	out, err := exec.CommandContext(ctx, "sbx", "daemon", "status").Output()
-	if err != nil {
-		return "", fmt.Errorf("run `sbx daemon status` to discover the socket path (is `sbx` installed and on PATH?): %w", err)
-	}
-	match := socketStatusPattern.FindSubmatch(out)
-	if match == nil {
-		return "", fmt.Errorf("could not parse a socket path from `sbx daemon status` output:\n%s", out)
-	}
-	return string(match[1]), nil
-}
-
 // NewClient constructs a client.Client wired to the local sbx daemon's unix
-// socket. If socketPath is empty, it is discovered via DiscoverSocketPath.
+// socket. The socket is resolved by ResolveSocketPath: socketPath if
+// non-empty, else $SBX_SOCKET, else `sbx daemon status`.
 // Extra opts are applied after the socket/base URL defaults, so callers can
 // override them (e.g. option.WithToken).
 //
 // No token is set by default — sbx v0.34.0 doesn't enforce bearerAuth over
 // the local socket. Pass option.WithToken(...) if a future version does.
 func NewClient(ctx context.Context, socketPath string, opts ...option.RequestOption) (*client.Client, error) {
-	if socketPath == "" {
-		discovered, err := DiscoverSocketPath(ctx)
-		if err != nil {
-			return nil, err
-		}
-		socketPath = discovered
-	}
-
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			// host in the request URL is ignored; always dial the socket.
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, "unix", socketPath)
-			},
-		},
+	socketPath, err := ResolveSocketPath(ctx, socketPath)
+	if err != nil {
+		return nil, err
 	}
 
 	allOpts := append([]option.RequestOption{
 		option.WithBaseURL("http://localhost"),
-		option.WithHTTPClient(httpClient),
+		option.WithHTTPClient(NewHTTPClient(socketPath)),
 	}, opts...)
 
 	return client.NewClient(allOpts...), nil
+}
+
+// NewHTTPClient returns an *http.Client that sends every request to the unix
+// socket at socketPath, whatever host the request URL names. Use it with
+// option.WithHTTPClient to customise the client further.
+func NewHTTPClient(socketPath string) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "unix", socketPath)
+			},
+			MaxIdleConns:    10,
+			IdleConnTimeout: 90 * time.Second,
+		},
+	}
 }

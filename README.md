@@ -25,8 +25,9 @@ This SDK targets the **primary `sandboxd.sock` REST API**.
 |------|-------------|
 | [`openapi.yaml`](./openapi.yaml) | OpenAPI 3.0.3 spec for the `sandboxd.sock` REST API — the source of truth for SDK generation |
 | [`fern/`](./fern) | Fern configuration (`generators.yml`, `fern.config.json`) |
-| [`Makefile`](./Makefile) | `make generate` / `make clean` for SDK generation |
-| `sdks/` | Generated SDK output (one directory per language) |
+| [`Makefile`](./Makefile) | `make generate`, `make test` and friends |
+| `sdks/` | Generated SDK output (git-ignored) plus the hand-written wrappers, packaging files and tests |
+| [`tests/fixtures/`](./tests/fixtures) | A fake daemon and a fake `sbx` CLI that the SDK tests run against |
 
 ## Generated SDKs
 
@@ -39,7 +40,15 @@ Fern produces idiomatic clients for four languages, configured in [`fern/generat
 | Go | `sdks/go` | `github.com/itbm/sbx-sdk/sdks/go` |
 | PHP | `sdks/php` | `itbm/sbx-sdk` (namespace `Sbx`) |
 
-> **Transport note:** the `sbx` API is served over a **Unix domain socket**, not TCP — the host in each URL is ignored. Generated clients point at `http://localhost` and require a custom HTTP transport that dials the socket. Each language has a hand-written wrapper (`sbx.ts` / `sbx.go` / `sbx.py` / `SbxClientFactory.php`) that discovers the socket via `sbx daemon status` and wires this up automatically — see [Installation](#installation) below.
+> **Transport note:** the `sbx` API is served over a **Unix domain socket**, not TCP — the host in each URL is ignored. Generated clients point at `http://localhost` and require a custom HTTP transport that dials the socket. Each language has a hand-written wrapper (`sbx.ts` / `sbx.go` / `sbx.py` / `SbxClientFactory.php`) that wires this up automatically — see [Installation](#installation) below.
+
+### Finding the socket
+
+Every wrapper looks for the socket in the same order:
+
+1. The socket path you pass in explicitly.
+2. The `SBX_SOCKET` environment variable.
+3. The `Socket:` line printed by `sbx daemon status` (which works whether or not the daemon is running). This needs `sbx` on `PATH` and gives up after 10 seconds.
 
 ## Installation
 
@@ -54,9 +63,12 @@ npm install https://github.com/itbm/sbx-sdk/releases/download/vX.Y.Z/sbx-sdk-typ
 ```ts
 import { createSbxClient } from "sbx-sdk/sbx";
 
-const client = await createSbxClient();
+const client = await createSbxClient(); // or { socketPath, token, getToken }
 const health = await client.daemon.getDaemonHealth();
+await client.close(); // release the socket connections
 ```
+
+Requires Node.js 22.19 or later.
 
 ### Python
 
@@ -65,11 +77,14 @@ pip install https://github.com/itbm/sbx-sdk/releases/download/vX.Y.Z/sbx-sdk-pyt
 ```
 
 ```python
-from sbx_sdk.sbx import create_sbx_client
+from sbx_sdk.sbx import close_sbx_client, create_sbx_client
 
-client = create_sbx_client()
+client = create_sbx_client()  # or create_sbx_client(socket_path, token=..., timeout=...)
 health = client.daemon.get_daemon_health()
+close_sbx_client(client)
 ```
+
+`create_async_sbx_client()` and `aclose_sbx_client()` do the same for the async client. Requires Python 3.9 or later.
 
 ### Go
 
@@ -82,9 +97,11 @@ go get github.com/itbm/sbx-sdk/sdks/go@vX.Y.Z
 ```go
 import sbx "github.com/itbm/sbx-sdk/sdks/go/sbx"
 
-client, err := sbx.NewClient(ctx, "")
+client, err := sbx.NewClient(ctx, "") // "" resolves the socket; add option.WithToken(...) if needed
 health, err := client.Daemon.GetDaemonHealth(ctx)
 ```
+
+The release workflow commits the generated Go code on a commit that isn't on any branch, and tags that commit `sdks/go/vX.Y.Z`. `go get` therefore gets a complete module, while `main` holds only the hand-written wrapper.
 
 ### PHP
 
@@ -118,26 +135,35 @@ composer install
 ```php
 use Sbx\SbxClientFactory;
 
-$client = SbxClientFactory::create();
+$client = SbxClientFactory::create(); // or create($socketPath, token: '...', timeout: 60.0)
 $health = $client->daemon->getDaemonHealth();
 ```
 
 ## Generating the SDKs
 
-Releases (tarballs + tags, including the Go nested-module tag) are built automatically by [`.github/workflows/release.yml`](./.github/workflows/release.yml) on every `vX.Y.Z` tag push. The steps below are for local/manual generation.
+Releases (tarballs + tags, including the Go nested-module tag) are built automatically by [`.github/workflows/release.yml`](./.github/workflows/release.yml) on every `vX.Y.Z` tag push, after the full test suite passes. [`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs the same tests on every push and pull request. The steps below are for local generation.
 
 **Prerequisites**
 
-- The [Fern CLI](https://buildwithfern.com/learn/cli-api-reference/cli-reference) — `npm install -g fern-api`
-- Language toolchains only if you intend to build/run the generated code
+- Node.js 22 and Docker (Fern's `--local` mode runs each generator in a container)
+- `npm ci` to install the pinned Fern CLI (see [`package.json`](./package.json))
+- The language toolchains for any SDK you want to build or test: Node.js 22.19+, Python 3.9+, Go, and PHP 8.3+ with Composer
 
 **Generate**
 
 ```bash
-make generate
+make check      # validate the spec
+make generate   # fern generate --local --force, writing fresh clients into sdks/
+make fix-perms  # on Linux, hand back any root-owned files the containers wrote
 ```
 
-This runs `fern generate --local --force`, writing fresh clients into `sdks/`. (The Makefile uses `sudo` around generation and then restores ownership of the output — Fern's `--local` mode runs generators in Docker.)
+**Test**
+
+```bash
+make test       # or test-typescript / test-python / test-go / test-php
+```
+
+Each SDK's tests check socket discovery against a fake `sbx` CLI, then make real requests over a Unix socket to a fake daemon ([`tests/fixtures/`](./tests/fixtures)).
 
 **Clean**
 
@@ -145,7 +171,7 @@ This runs `fern generate --local --force`, writing fresh clients into `sdks/`. (
 make clean
 ```
 
-Removes the `sdks/` directory.
+Removes the generated (git-ignored) files under `sdks/`, keeping the committed wrappers, packaging files and tests.
 
 ## API at a glance
 
@@ -160,9 +186,19 @@ The `sandboxd.sock` API is grouped as:
 | **Policies** | `/policy/setup`, `/policy/rules`, `/policy/profiles`, `/network/log` | `sbx policy …` |
 | **Images** | `/docker/images`, `.../create`, `.../load`, `.../remove` | `sbx template …` |
 
+### Text responses
+
+A few endpoints return text rather than JSON, and the SDK methods return it as a string:
+
+- **Exec** (`POST /sandbox/{name}/exec`, non-interactive): the command's combined stdout and stderr.
+- **Logs** (`GET /sandbox/{name}/logs`): newline-delimited log lines.
+- **Image pull** (`POST /docker/images/create`): newline-delimited JSON progress events, in the same format as `docker pull`. Split the string on newlines and parse each line.
+
+Interactive or TTY exec takes over the HTTP connection for raw streams, which the generated clients can't handle.
+
 ### Authentication
 
-Every endpoint requires a bearer token **except** `GET /daemon/health` and `GET /daemon/info`:
+The spec marks every endpoint **except** `GET /daemon/health` and `GET /daemon/info` as needing a bearer token. In practice, `sbx` v0.34.0 doesn't enforce this over the local socket, so the wrappers send no token by default. Each accepts one if a future version starts to check:
 
 ```bash
 SOCK="$HOME/.local/state/sandboxes/sandboxes/sandboxd/sandboxd.sock"
@@ -184,7 +220,9 @@ The token is the Docker OAuth **access token** stored by `sbx login` — a short
 
 1. Update [`openapi.yaml`](./openapi.yaml) as new API behavior is observed.
 2. Regenerate with `make generate`.
-3. Commit the spec change; regenerate SDKs as needed.
+3. Commit the spec change. Generated code is git-ignored, so only the spec and the hand-written files are committed.
+
+Run `make check`, `make generate` and `make test` before opening a pull request; CI runs the same steps.
 
 Because the API is reverse-engineered, coverage is best-effort — several routes are documented as `501 Not Implemented` upstream (file copy, `save`), and some request/response shapes are inferred rather than confirmed.
 

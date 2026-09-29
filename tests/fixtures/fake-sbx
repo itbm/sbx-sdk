@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stand-in for the `sbx` CLI, for testing socket discovery. Prints what
+# `sbx daemon status` prints, using FAKE_SBX_SOCKET as the socket path, and
+# exits with FAKE_SBX_EXIT (default 0). FAKE_SBX_EXIT=1 mimics a stopped
+# daemon, which still prints the socket path. FAKE_SBX_NO_SOCKET=1 leaves
+# the Socket line out.
+echo "Status: ${FAKE_SBX_STATUS:-running}"
+if [ -z "$FAKE_SBX_NO_SOCKET" ]; then
+  echo "Socket: ${FAKE_SBX_SOCKET:-/tmp/fake-sbx.sock}"
+fi
+echo "some noise on stderr" >&2
+exit "${FAKE_SBX_EXIT:-0}"

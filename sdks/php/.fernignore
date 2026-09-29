@@ -1,3 +1,4 @@
 .fernignore
 src/SbxClientFactory.php
+tests/SbxClientFactoryTest.php
 composer.json

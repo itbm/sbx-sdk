@@ -75,6 +75,14 @@ components:
       scheme: bearer
       description: Docker OAuth access token obtained via `sbx login`
 
+  responses:
+    Unauthorized:
+      description: Missing or invalid bearer token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
   schemas:
 
     # ── Common ────────────────────────────────────────────────────────────────
@@ -558,6 +566,8 @@ paths:
       description: Returns a large JSON diagnostic bundle. Used by `sbx diagnose`.
       tags: [daemon]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Diagnostics bundle
           content:
@@ -572,6 +582,8 @@ paths:
       summary: Get current log levels
       tags: [daemon]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Current log levels per category
           content:
@@ -598,6 +610,8 @@ paths:
             schema:
               $ref: '#/components/schemas/SetLogLevelRequest'
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '204':
           description: Log level updated
         '400':
@@ -622,6 +636,8 @@ paths:
             schema:
               type: object
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Version check result
           content:
@@ -647,11 +663,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/Sandbox'
         '401':
-          description: Missing or invalid authorization token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/Unauthorized'
 
     post:
       operationId: createSandbox
@@ -681,6 +693,8 @@ paths:
                 NODE_ENV: development
               network_policy: balanced
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Created sandbox
           content:
@@ -720,6 +734,8 @@ paths:
       summary: Get a sandbox by name
       tags: [sandboxes]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Sandbox details
           content:
@@ -739,6 +755,8 @@ paths:
       description: Stops and removes a sandbox and all associated resources. Maps to `sbx rm`.
       tags: [sandboxes]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '204':
           description: Sandbox removed
         '404':
@@ -761,6 +779,8 @@ paths:
           schema:
             type: string
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '204':
           description: Sandbox stopped
         '404':
@@ -783,6 +803,8 @@ paths:
           schema:
             type: string
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '204':
           description: Sandbox started
         '404':
@@ -807,6 +829,8 @@ paths:
           schema:
             type: string
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Saved template
         '501':
@@ -850,10 +874,17 @@ paths:
               tty: true
               interactive: true
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: >
-            Non-interactive: stdout/stderr in response body.
+            Non-interactive: combined stdout/stderr in the response body.
             Interactive: connection hijacked for raw stream (not standard HTTP response).
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Combined stdout/stderr of the command
         '404':
           description: Sandbox not found
           content:
@@ -877,6 +908,8 @@ paths:
       description: Maps to `sbx ports <sandbox>`.
       tags: [ports]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Published port mappings
           content:
@@ -907,6 +940,8 @@ paths:
                 protocol: tcp
               - sandbox_port: 5432
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Resolved port mappings with allocated host ports
           content:
@@ -943,6 +978,8 @@ paths:
                 host_port: 3000
                 protocol: tcp
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '204':
           description: Ports unpublished
         '404':
@@ -967,6 +1004,8 @@ paths:
           schema:
             type: string
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Log stream (newline-delimited)
           content:
@@ -1007,6 +1046,8 @@ paths:
         When implemented, will use the Docker archive API on `docker.sock`.
       tags: [files]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: File contents (tar archive)
           content:
@@ -1036,6 +1077,8 @@ paths:
               type: string
               format: binary
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: File uploaded
         '501':
@@ -1065,6 +1108,8 @@ paths:
             type: string
           description: Sandbox name
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Active runtime session
           content:
@@ -1100,6 +1145,8 @@ paths:
               description: >
                 Body schema not fully determined. Must include a sandbox name field.
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Runtime session started
           content:
@@ -1127,6 +1174,8 @@ paths:
         `sbx policy init <allow-all|balanced|deny-all>`
       tags: [policy]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Policy setup status
           content:
@@ -1154,6 +1203,8 @@ paths:
             type: string
           description: Filter to rules scoped to a specific sandbox
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Policy rules
           content:
@@ -1207,6 +1258,8 @@ paths:
                     - action: remove-id
                       id: c85bd8b4-7a46-4dfa-a998-adf61aa87228
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Action results
           content:
@@ -1227,6 +1280,8 @@ paths:
       description: Maps to `sbx policy profile ls`. Returns an empty list on a default installation.
       tags: [policy]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Policy profiles
           content:
@@ -1241,6 +1296,8 @@ paths:
       description: Returns the sandbox network access log. Maps to `sbx policy log`.
       tags: [policy]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Network access log
           content:
@@ -1258,6 +1315,8 @@ paths:
       description: Lists template images available in the local cache. Maps to `sbx template ls`.
       tags: [images]
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Template images
           content:
@@ -1294,10 +1353,17 @@ paths:
           description: Image tag
           example: claude-code-docker
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
-          description: Streaming pull progress (newline-delimited JSON)
+          description: >
+            Streaming pull progress as newline-delimited JSON (one progress
+            event object per line, same format as `docker pull`). Declared as
+            text so generated clients return the raw body instead of trying to
+            parse it as a single JSON value; split on newlines and parse each
+            line to read the events.
           content:
-            application/json:
+            text/plain:
               schema:
                 type: string
                 description: Newline-delimited JSON progress events
@@ -1316,6 +1382,8 @@ paths:
               type: string
               format: binary
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '200':
           description: Image loaded successfully
 
@@ -1334,6 +1402,8 @@ paths:
           description: Image tag or digest to remove
           example: myimage:v1.0
       responses:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '204':
           description: Image removed
         '404':

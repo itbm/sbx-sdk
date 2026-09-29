@@ -7,36 +7,49 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Version tag to release (e.g. v0.34.0)"
+        description: "Existing version tag to release (e.g. v0.34.0)"
         required: true
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # Run the full build and test suite against the tagged commit first, so a
+  # broken spec or wrapper never reaches a release.
+  test:
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     steps:
+      # A manual run starts on the default branch, so check out the tag
+      # explicitly to release exactly what was tagged.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Resolve version
         id: version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' is not of the form vX.Y.Z"
+            exit 1
+          fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
 
       - uses: actions/setup-python@v5
         with:
@@ -46,13 +59,20 @@ jobs:
         with:
           php-version: "8.3"
           extensions: curl, json
+          tools: composer
 
       # fern generate --local runs each generator in Docker; ubuntu-latest
       # runners have Docker pre-installed and running.
       - name: Generate SDKs from the OpenAPI spec
         run: |
-          npm install
-          npm run build
+          npm ci
+          make generate fix-perms
+
+      - uses: actions/setup-go@v5
+        with:
+          # Not go-version-file: the generated go.mod declares an older Go than
+          # the generated code needs (io.ReadAll, reflect.Pointer).
+          go-version: stable
 
       - name: Verify Go module builds
         working-directory: sdks/go
@@ -82,18 +102,27 @@ jobs:
         run: |
           jq --arg v "${{ steps.version.outputs.version }}" '.version = $v' composer.json > composer.json.tmp
           mv composer.json.tmp composer.json
-          composer install --no-interaction
+          composer validate --no-check-publish
           mkdir -p "$GITHUB_WORKSPACE/dist-artifacts"
           tar -czf "$GITHUB_WORKSPACE/dist-artifacts/sbx-sdk-php-${{ steps.version.outputs.version }}.tar.gz" composer.json src/
 
       # Go modules in a subdirectory resolve via a nested tag
       # (sdks/go/vX.Y.Z), not the plain release tag — see
-      # https://go.dev/ref/mod#vcs-version. `go get` needs this pushed
-      # for github.com/itbm/sbx-sdk/sdks/go@vX.Y.Z to work.
+      # https://go.dev/ref/mod#vcs-version. The generated Go code (including
+      # go.mod) is git-ignored, so tagging the checked-out commit would give
+      # `go get` an empty module. Instead, commit the generated code on a
+      # detached HEAD and tag that commit. No branch ever carries it.
       - name: Tag the Go module for its subdirectory
+        env:
+          GO_TAG: sdks/go/${{ steps.version.outputs.tag }}
         run: |
-          git tag "sdks/go/${{ steps.version.outputs.tag }}"
-          git push origin "sdks/go/${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --detach
+          git add --force sdks/go
+          git commit --message "Go SDK ${{ steps.version.outputs.tag }} (generated)"
+          git tag "$GO_TAG"
+          git push origin "refs/tags/$GO_TAG"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

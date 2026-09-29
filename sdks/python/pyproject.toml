@@ -7,8 +7,22 @@ requires-python = ">=3.9"
 dependencies = [
     "httpx>=0.21.2",
     "pydantic>=2.0.0",
+    "typing_extensions>=4.0.0",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.urls]
+Source = "https://github.com/itbm/sbx-sdk"
+
 [build-system]
-requires = ["setuptools>=61.0"]
+# 77+ is needed for the SPDX `license` string above.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sbx_sdk*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
